@@ -14,6 +14,10 @@ import "strings"
 import "io"
 import "bufio"
 import "path/filepath"
+//
+import "log"
+import "net/http"
+import _ "net/http/pprof"
 
 var cmdIsEmpty      = errors.New("cmd is empty")
 var countTooShort   = errors.New("count to short")
@@ -35,7 +39,12 @@ type Runner struct {
 
 func main() {
 
-    cmd_line,count,compress,err := parseInput()
+    go func() {
+	log.Println(http.ListenAndServe("localhost:6060", nil))
+    }()
+
+    cmd_line,logDir,count,compress,err := parseInput()
+    _ = logDir
     if err != nil { fmt.Printf("error:%v\n",err) ; return }
 
     runner,err := NewRunner(cmd_line,count,compress)
@@ -44,17 +53,19 @@ func main() {
     runner.run()
 }
 
-func parseInput()(cmd []string, count int, compress bool ,  err error){
+func parseInput()(cmd []string, logDir string, count int, compress bool,  err error){
 
     var cmdLine string
 
     cmdLinePtr  := flag.String("cmd","","Command to run")
+    logDirPtr   := flag.String("log-dir","./","Path to log directory")
     countPtr    := flag.Int("count",0,"Lines count")
     compressPtr := flag.Bool("compress",false,"Compress")
 
     flag.Parse()
 
     if cmdLinePtr  != nil {  cmdLine   = *cmdLinePtr  } else { err = parseError ; return }
+    if logDirPtr   != nil {  logDir    = *logDirPtr   } else { err = parseError ; return }
     if countPtr    != nil {  count     = *countPtr    } else { err = parseError ; return }
     if compressPtr != nil {  compress  = *compressPtr } else { err = parseError ; return }
 
@@ -104,13 +115,14 @@ func(r *Runner)catchExit()(){
     signal.Notify(signalChan, os.Interrupt)
     go func() {
         for _ = range signalChan {
-            //fmt.Printf("\nCleaning buffer ... please wait\n")
             r.quitCapture <- true
             <-r.quit
             cleanupDone <- true
+            break
         }
     }()
     <-cleanupDone
+    return
 
 }
 
@@ -118,24 +130,31 @@ func(r *Runner)catchExit()(){
 
 func(r *Runner)capture()(){
     //
+    // lineReader := bufio.NewReader(r.stdout)
+    exit:=false
     lineReader := bufio.NewReader(r.stdout)
+    var deffered string
     for {
         select {
             default:
+                if exit { break }
                 line,isPrefix,err := lineReader.ReadLine()
-                _ = isPrefix
-                //fmt.Printf("line: %v\nisPrefix: %v\nerr: %v\n",string(line),isPrefix,err)
-                if err== nil {
-                    r.ch<-string(line)
-                } else {
-                    break
+                if isPrefix && err==nil {
+                    deffered+=string(line)
+                    continue
                 }
+                if err == nil && !isPrefix {
+                    lineStr := string(line)
+                    r.ch<-deffered+lineStr
+                    deffered = ""
+                }
+                if err!= nil { break }
             case <- r.quitCapture:
-                r.cmd.Process.Kill()
-                r.quitHandle<-true
+                exit = true
         }
     }
-    // close(ch)
+    r.cmd.Process.Kill()
+    r.quitHandle<-true
     //
 }
 
@@ -158,7 +177,7 @@ func (r *Runner)handle()(){
                     }
                     if blank {
                         // prepare new filename
-                        if f!=nil { f.Sync() ;  f.Close() ;  }
+                        if f!=nil      { f.Sync()  ; f.Close()  ; f = nil     }
                         counter     =  0
                         t           := time.Now()
                         timestamp   := t.Format("20060102150405")
@@ -167,26 +186,24 @@ func (r *Runner)handle()(){
                             cmdName = r.cmd.Args[0] + "." + cmdName
                         }
                         f, err = os.Create("./" + cmdName)
-                        if err != nil { return }
+                        if err != nil { break }
                         blank = false
                     }
                     _,err = f.WriteString(s+"\n")
+                    f.Sync()
                     counter += 1
                     if (counter >= r.count) || ( err!= nil )  { blank = true }
                     fmt.Println(s)
             case <-r.quitHandle:
                 finish = true
             default:
-                if finish {  r.quit<-true ; break }
+                if finish { break }
         }
     }
-    if f!=nil { f.Sync() ;  ; f.Close() }
+    if f!=nil      { f.Sync() ;  f.Close() ; f = nil }
+    r.quit<-true
 }
 
-func compress()(){
-
-
-}
 
 func Command(args []string) (cmd *exec.Cmd,err error) {
     // overwriting existing exec.Command  function 
@@ -206,3 +223,4 @@ func Command(args []string) (cmd *exec.Cmd,err error) {
     return cmd, nil
 }
 
+func compress()(){ }
