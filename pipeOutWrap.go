@@ -15,9 +15,6 @@ import "io"
 import "bufio"
 import "path/filepath"
 //
-import "log"
-import "net/http"
-import _ "net/http/pprof"
 
 var cmdIsEmpty      = errors.New("cmd is empty")
 var countTooShort   = errors.New("count to short")
@@ -27,6 +24,7 @@ var cantOpenNewFile = errors.New("can't open new file")
 type Runner struct {
 
     cmd         *exec.Cmd
+    log_dir     string
     stdout      io.ReadCloser
     ch          chan string
     quitCapture chan bool
@@ -39,15 +37,12 @@ type Runner struct {
 
 func main() {
 
-    go func() {
-	log.Println(http.ListenAndServe("localhost:6060", nil))
-    }()
-
     cmd_line,logDir,count,compress,err := parseInput()
-    _ = logDir
+    //fmt.Printf("Flags:\n%v %v %v %v\n",cmd_line,logDir,count,compress)
+
     if err != nil { fmt.Printf("error:%v\n",err) ; return }
 
-    runner,err := NewRunner(cmd_line,count,compress)
+    runner,err := NewRunner(cmd_line,logDir,count,compress)
     if err != nil { fmt.Printf("error:%v\n",err) ; return }
 
     runner.run()
@@ -78,12 +73,14 @@ func parseInput()(cmd []string, logDir string, count int, compress bool,  err er
 
 }
 
-func NewRunner( cmd_line []string ,count int,compress bool )( *Runner , error){
+func NewRunner( cmd_line []string, log_dir string, count int, compress bool )( *Runner , error){
 
     var r Runner
     cmd,err       := Command(cmd_line)
     if err != nil { return nil,err }
     r.cmd         =  cmd
+    if !strings.HasSuffix(log_dir, "/") { log_dir=log_dir+"/" }
+    r.log_dir     = log_dir
     r.ch          = make(chan string,100)
     r.quitCapture = make(chan bool)
     r.quitHandle  = make(chan bool)
@@ -113,6 +110,7 @@ func(r *Runner)catchExit()(){
     signalChan  := make(chan os.Signal, 1)
     cleanupDone := make(chan bool)
     signal.Notify(signalChan, os.Interrupt)
+    signal.Notify(signalChan, os.Kill)
     go func() {
         for _ = range signalChan {
             r.quitCapture <- true
@@ -164,7 +162,7 @@ func (r *Runner)handle()(){
     finish := false
     var f *os.File
     var err error
-    var cmdName string
+    var logName string
     //
     blank              := true
     counter            := 0
@@ -181,11 +179,13 @@ func (r *Runner)handle()(){
                         counter     =  0
                         t           := time.Now()
                         timestamp   := t.Format("20060102150405")
-                        cmdName     =  "logfile."+timestamp
+                        logName     =  "logfile."+timestamp
                         if len(r.cmd.Args) > 0 {
-                            cmdName = r.cmd.Args[0] + "." + cmdName
+                            cmdName := filepath.Base(r.cmd.Args[0])
+                            logName = cmdName + "." + logName
                         }
-                        f, err = os.Create("./" + cmdName)
+                        //fmt.Printf("\ncreate file: %v\n",r.log_dir + logName)
+                        f, err = os.Create(r.log_dir + logName)
                         if err != nil { break }
                         blank = false
                     }
@@ -193,7 +193,7 @@ func (r *Runner)handle()(){
                     f.Sync()
                     counter += 1
                     if (counter >= r.count) || ( err!= nil )  { blank = true }
-                    fmt.Println(s)
+                    //fmt.Println(s)
             case <-r.quitHandle:
                 finish = true
             default:
