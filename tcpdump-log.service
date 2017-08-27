@@ -9,3 +9,5 @@ Environment="LOG_DIR=/scripts2/logs"
 
 Type=simple
 ExecStart=/scripts2/pipeOutWrap -cmd="${CMD_LINE}" -count=${LINE_PER_FILE} -log-dir="${LOG_DIR}"
+# if systemd kills service immideatly after start try to replace ExecStart to this 
+# /scripts2/pipeOutWrap -cmd=${CMD_LINE} -count=${LINE_PER_FILE} -log-dir=${LOG_DIR}
