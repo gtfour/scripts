@@ -1,0 +1,11 @@
+[Unit]
+Description=tcpdump log wrap
+After=network.target
+
+[Service]
+Environment='CMD_LINE=/usr/sbin/tcpdump -i lo'
+Environment="LINE_PER_FILE=20"
+Environment="LOG_DIR=/scripts2/logs"
+
+Type=simple
+ExecStart=/scripts2/pipeOutWrap -cmd="${CMD_LINE}" -count=${LINE_PER_FILE} -log-dir="${LOG_DIR}"
