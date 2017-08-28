@@ -20,49 +20,55 @@ var cmdIsEmpty      = errors.New("cmd is empty")
 var countTooShort   = errors.New("count to short")
 var parseError      = errors.New("parse error")
 var cantOpenNewFile = errors.New("can't open new file")
+var fileDoesntExist = errors.New("file doesn't exist")
+var logDirNotExists = errors.New("log-dir doesn't exist")
 
 type Runner struct {
 
-    cmd         *exec.Cmd
-    log_dir     string
-    stdout      io.ReadCloser
-    ch          chan string
-    quitCapture chan bool
-    quitHandle  chan bool
-    quit        chan bool
-    count       int
-    compress    bool
+    cmd                *exec.Cmd
+    log_dir            string
+    log_dir_threshold  int
+    stdout             io.ReadCloser
+    ch                 chan string
+    quitCapture        chan bool
+    quitHandle         chan bool
+    quit               chan bool
+    count              int
+    compress           bool
+    currentLogFile     string
 
 }
 
 func main() {
 
-    cmd_line,logDir,count,compress,err := parseInput()
+    cmd_line,logDir,count,logDirThreshold,compress,err := parseInput()
     //fmt.Printf("Flags:\n%v %v %v %v\n",cmd_line,logDir,count,compress)
 
     if err != nil { fmt.Printf("error:%v\n",err) ; return }
 
-    runner,err := NewRunner(cmd_line,logDir,count,compress)
+    runner,err := NewRunner(cmd_line,logDir,count,logDirThreshold,compress)
     if err != nil { fmt.Printf("error:%v\n",err) ; return }
 
     runner.run()
 }
 
-func parseInput()(cmd []string, logDir string, count int, compress bool,  err error){
+func parseInput()(cmd []string, logDir string, count int, log_dir_threshold int, compress bool,  err error){
 
     var cmdLine string
 
-    cmdLinePtr  := flag.String("cmd","","Command to run")
-    logDirPtr   := flag.String("log-dir","./","Path to log directory")
-    countPtr    := flag.Int("count",0,"Lines count")
-    compressPtr := flag.Bool("compress",false,"Compress")
+    cmdLinePtr         := flag.String("cmd","","Command to run")
+    logDirPtr          := flag.String("log-dir","./","Path to log directory")
+    countPtr           := flag.Int("count",0,"Lines count")
+    logDirThresholdPtr := flag.Int("log-dir-threshold",100,"Maximum log directory size:Default 100Mb")
+    compressPtr        := flag.Bool("compress",false,"Compress")
 
     flag.Parse()
 
-    if cmdLinePtr  != nil {  cmdLine   = *cmdLinePtr  } else { err = parseError ; return }
-    if logDirPtr   != nil {  logDir    = *logDirPtr   } else { err = parseError ; return }
-    if countPtr    != nil {  count     = *countPtr    } else { err = parseError ; return }
-    if compressPtr != nil {  compress  = *compressPtr } else { err = parseError ; return }
+    if cmdLinePtr         != nil {  cmdLine           = *cmdLinePtr         } else { err = parseError ; return }
+    if logDirPtr          != nil {  logDir            = *logDirPtr          } else { err = parseError ; return }
+    if countPtr           != nil {  count             = *countPtr           } else { err = parseError ; return }
+    if logDirThresholdPtr != nil {  log_dir_threshold = *logDirThresholdPtr } else { err = parseError ; return }
+    if compressPtr        != nil {  compress          = *compressPtr        } else { err = parseError ; return }
 
     if cmdLine == "" { err = cmdIsEmpty  ; return }
     if count   < 1 { err = countTooShort ; return }
@@ -73,20 +79,36 @@ func parseInput()(cmd []string, logDir string, count int, compress bool,  err er
 
 }
 
-func NewRunner( cmd_line []string, log_dir string, count int, compress bool )( *Runner , error){
+func NewRunner( cmd_line []string, log_dir string, count int, log_dir_threshold int, compress bool )( *Runner , error){
 
     var r Runner
     cmd,err       := Command(cmd_line)
     if err != nil { return nil,err }
     r.cmd         =  cmd
     if !strings.HasSuffix(log_dir, "/") { log_dir=log_dir+"/" }
-    r.log_dir     = log_dir
-    r.ch          = make(chan string,100)
-    r.quitCapture = make(chan bool)
-    r.quitHandle  = make(chan bool)
-    r.quit        = make(chan bool)
-    r.count       = count
-    r.compress    = compress
+    r.log_dir           = log_dir
+    //
+    _, err = os.Stat(r.log_dir)
+    if os.IsNotExist(err) { return nil, logDirNotExists }
+    //
+    r.ch                = make(chan string,100)
+    r.quitCapture       = make(chan bool)
+    r.quitHandle        = make(chan bool)
+    r.quit              = make(chan bool)
+    r.count             = count
+    r.log_dir_threshold = log_dir_threshold
+    r.compress          = compress
+    fmt.Printf("runner:\n")
+    fmt.Printf("\n\tcmd_line:%v",cmd_line)
+    fmt.Printf("\n\tlog_dir:%v",r.log_dir)
+    fmt.Printf("\n\tch:%v",r.ch)
+    fmt.Printf("\n\tquitCapture:%v",r.quitCapture)
+    fmt.Printf("\n\tquitHandle:%v",r.quitHandle)
+    fmt.Printf("\n\tquit:%v",r.quit)
+    fmt.Printf("\n\tcount:%v",r.count)
+    fmt.Printf("\n\tlog_dir_threshold:%v",r.log_dir_threshold)
+    fmt.Printf("\n\tcompress:%v",r.compress)
+    fmt.Printf("\n")
     return &r, nil
 
 }
@@ -185,9 +207,12 @@ func (r *Runner)handle()(){
                             logName = cmdName + "." + logName
                         }
                         //fmt.Printf("\ncreate file: %v\n",r.log_dir + logName)
-                        f, err = os.Create(r.log_dir + logName)
+                        new_file := r.log_dir + logName
+                        f, err = os.Create(new_file)
                         if err != nil { break }
                         blank = false
+                        r.currentLogFile = new_file
+                        r.cleanUp()
                     }
                     _,err = f.WriteString(s+"\n")
                     f.Sync()
@@ -202,6 +227,29 @@ func (r *Runner)handle()(){
     }
     if f!=nil      { f.Sync() ;  f.Close() ; f = nil }
     r.quit<-true
+}
+
+func(r *Runner)cleanUp()(err error){
+    //
+    dirSizeMb,err := DirSizeMb(r.log_dir)
+    if err!=nil{return}
+    threshold     := r.log_dir_threshold
+    fmt.Printf("dirSizeMb: %v Threshold: %v\n",dirSizeMb,threshold)
+    if dirSizeMb>threshold{
+        fmt.Printf("Dir size is bigger than threshold\n")
+        var oldestFile string
+        oldestFile,err = getOldestFile(r.log_dir)
+        oldestFile     = r.log_dir+oldestFile
+        if err != nil { return }
+        _, err = os.Stat(oldestFile)
+        if os.IsNotExist(err) { return fileDoesntExist }
+        if  oldestFile == r.currentLogFile { return nil }
+        fmt.Printf("\nCleanUp for %v\n",oldestFile)
+        return os.Remove(oldestFile)
+        //
+    }
+    return nil
+    //
 }
 
 
@@ -223,4 +271,42 @@ func Command(args []string) (cmd *exec.Cmd,err error) {
     return cmd, nil
 }
 
-func compress()(){ }
+func DirSizeMb(path string) (int, error) {
+    var size        int64
+    err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+        if !info.IsDir() {
+            size += info.Size()
+        }
+        return err
+    })
+    sizeMB := int(size) / 1024 / 1024
+    return sizeMB, err
+}
+
+func getOldestFile(dir_path string) (filename string,err error) {
+    first_iter := true
+    var fTgtName  string
+    var fTgtMtime time.Time
+
+    err = filepath.Walk(dir_path, func(_ string, info os.FileInfo, err error) error {
+        if !info.IsDir() {
+            fname  := info.Name()
+            fmtime := info.ModTime()
+            if first_iter {
+                fTgtName   = fname
+                fTgtMtime  = fmtime
+                first_iter = false
+            }
+            if fmtime.Before(fTgtMtime){
+                fTgtName   = fname
+                fTgtMtime  = fmtime
+            }
+        }
+        return err
+    })
+    return fTgtName, err
+}
+
+
+func avg_file_size()(){}
+func delta()(){ }
