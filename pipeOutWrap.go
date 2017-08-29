@@ -1,7 +1,11 @@
 package main
 
-// Usage:  ./test -cmd="tcpdump -i lo" -count=20
-// count - number of lines inside output file
+// Usage:  /scripts/pipeOutWrap -cmd="/usr/sbin/tcpdump -i lo" -count=20 -log-dir="/scripts/logs" -log-dir-threshold=40
+// cmd - command which is going to be wrapped
+// count - number of lines inside each output file
+// log-dir - path to directory with output files
+// log-dir-threshold - max size of log directory in Mb (script is automatically removes old files)
+//
 
 import "fmt"
 import "os"
