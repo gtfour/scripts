@@ -6,7 +6,9 @@ After=network.target
 Environment='CMD_LINE=/usr/sbin/tcpdump -i lo'
 Environment="LINE_PER_FILE=20"
 Environment="LOG_DIR=/scripts/logs"
-Environment="LOG_DIR_MAX_SIZE=40"
+Environment="LOG_DIR_MAX_SIZE_MB=40"
 
 Type=simple
-ExecStart=/scripts/pipeOutWrap -cmd="${CMD_LINE}" -count=${LINE_PER_FILE} -log-dir="${LOG_DIR}" -log-dir-threshold="${LOG_DIR_MAX_SIZE}"
+# if systemd kills service immideatly after start try to replace ExecStart to this 
+# ExecStart=/scripts/pipeOutWrap -cmd=${CMD_LINE} -count=${LINE_PER_FILE} -log-dir=${LOG_DIR} -log-dir-threshold=${LOG_DIR_MAX_SIZE_MB}
+ExecStart=/scripts/pipeOutWrap -cmd="${CMD_LINE}" -count=${LINE_PER_FILE} -log-dir="${LOG_DIR}" -log-dir-threshold="${LOG_DIR_MAX_SIZE_MB}"

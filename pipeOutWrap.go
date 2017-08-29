@@ -36,6 +36,7 @@ type Runner struct {
     count              int
     compress           bool
     currentLogFile     string
+    timeout_sec        time.Duration
 
 }
 
@@ -98,6 +99,7 @@ func NewRunner( cmd_line []string, log_dir string, count int, log_dir_threshold 
     r.count             = count
     r.log_dir_threshold = log_dir_threshold
     r.compress          = compress
+    r.timeout_sec       = 2
     fmt.Printf("runner:\n")
     fmt.Printf("\n\tcmd_line:%v",cmd_line)
     fmt.Printf("\n\tlog_dir:%v",r.log_dir)
@@ -108,6 +110,7 @@ func NewRunner( cmd_line []string, log_dir string, count int, log_dir_threshold 
     fmt.Printf("\n\tcount:%v",r.count)
     fmt.Printf("\n\tlog_dir_threshold:%v",r.log_dir_threshold)
     fmt.Printf("\n\tcompress:%v",r.compress)
+    fmt.Printf("\n\ttimeout_sec:%v",r.timeout_sec)
     fmt.Printf("\n")
     return &r, nil
 
@@ -212,7 +215,7 @@ func (r *Runner)handle()(){
                         if err != nil { break }
                         blank = false
                         r.currentLogFile = new_file
-                        r.cleanUp()
+                        go r.cleanUp()
                     }
                     _,err = f.WriteString(s+"\n")
                     f.Sync()
@@ -223,6 +226,7 @@ func (r *Runner)handle()(){
                 finish = true
             default:
                 if finish { break }
+                time.Sleep(time.Second * r.timeout_sec)
         }
     }
     if f!=nil      { f.Sync() ;  f.Close() ; f = nil }
