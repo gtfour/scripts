@@ -59,7 +59,7 @@ func parseInput()(cmd []string, logDir string, count int, log_dir_threshold int,
     cmdLinePtr         := flag.String("cmd","","Command to run")
     logDirPtr          := flag.String("log-dir","./","Path to log directory")
     countPtr           := flag.Int("count",0,"Lines count")
-    logDirThresholdPtr := flag.Int("log-dir-threshold",100,"Maximum log directory size:Default 100Mb")
+    logDirThresholdPtr := flag.Int("log-dir-threshold",100,"Maximum log directory size MB")
     compressPtr        := flag.Bool("compress",false,"Compress")
 
     flag.Parse()
@@ -234,9 +234,8 @@ func(r *Runner)cleanUp()(err error){
     dirSizeMb,err := DirSizeMb(r.log_dir)
     if err!=nil{return}
     threshold     := r.log_dir_threshold
-    fmt.Printf("dirSizeMb: %v Threshold: %v\n",dirSizeMb,threshold)
     if dirSizeMb>threshold{
-        fmt.Printf("Dir size is bigger than threshold\n")
+        fmt.Printf("\nThreshold is fired:\tlog-dir max size threshold: %v\tlog-dir current size: %v",threshold,dirSizeMb)
         var oldestFile string
         oldestFile,err = getOldestFile(r.log_dir)
         oldestFile     = r.log_dir+oldestFile
@@ -244,7 +243,7 @@ func(r *Runner)cleanUp()(err error){
         _, err = os.Stat(oldestFile)
         if os.IsNotExist(err) { return fileDoesntExist }
         if  oldestFile == r.currentLogFile { return nil }
-        fmt.Printf("\nCleanUp for %v\n",oldestFile)
+        fmt.Printf("\nRemoving file %v",oldestFile)
         return os.Remove(oldestFile)
         //
     }
